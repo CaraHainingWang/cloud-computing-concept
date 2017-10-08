@@ -93,22 +93,24 @@ void MP1Node::nodeStart(char *servaddrstr, short servport) {
  * DESCRIPTION: Find out who I am and start up
  */
 int MP1Node::initThisNode(Address *joinaddr) {
-	/*
-	 * This function is partially implemented and may require changes
-	 */
-	int id = *(int*)(&memberNode->addr.addr);
-	int port = *(short*)(&memberNode->addr.addr[4]);
+		/*
+		 * This function is partially implemented and may require changes
+		 */
+		int id = *(int*)(&memberNode->addr.addr);
+		int port = *(short*)(&memberNode->addr.addr[4]);
 
-	memberNode->bFailed = false;
-	memberNode->inited = true;
-	memberNode->inGroup = false;
-    // node is up!
-	memberNode->nnb = 0;
-	memberNode->heartbeat = 0;
-	memberNode->pingCounter = TFAIL;
-	memberNode->timeOutCounter = -1;
+		memberNode->bFailed = false;
+		memberNode->inited = true;
+		memberNode->inGroup = false;
+	    // node is up!
+		memberNode->nnb = 0;
+		memberNode->heartbeat = 0;
+		memberNode->pingCounter = TFAIL;
+		memberNode->timeOutCounter = -1;
     initMemberListTable(memberNode);
-
+		memberNode->memberList.push_back(
+				MemberListEntry(id, port, memberNode->heartbeat, par->getcurrtime()));
+		memberNode->myPos = memberNode->memberList.begin();
     return 0;
 }
 
@@ -210,6 +212,61 @@ void MP1Node::checkMessages() {
     return;
 }
 
+MemberListEntry parseMemberListEntry(
+				char* message, long timestamp) {
+		Address *addr = (Address *) message;
+		int id = *(int *)(addr->addr);
+		short port = *(short *)(addr->addr + sizeof(int));
+		long heartbeat = *((long *)(message+sizeof(Address)+1));
+		return MemberListEntry(id, port, heartbeat, timestamp);
+}
+
+
+bool MP1Node::handle_joinreq(char* message, size_t message_size) {
+		memberNode->memberList.push_back(parseMemberListEntry(
+						message, par->getcurrtime()));
+		return true;
+}
+
+vector<MemberListEntry> MP1Node::deserialization(
+				char* message, size_t message_size) {
+		int entrySize = sizeof(Address) + sizeof(long);
+		vector<MemberListEntry> entries;
+		for (int i = 0; i < message_size; i+=entrySize) {
+				entries.push_back(parseMemberListEntry(message+i, par->getcurrtime()));
+		}
+		return entries;
+}
+
+void MP1Node::updateMemberList(const vector<MemberListEntry>& list) {
+		for (auto iter2 = list.begin(); iter2 != list.end(); iter2++) {
+				bool itemExist = false;
+				for (auto iter1 = memberNode->memberList.begin(); iter1 != memberNode->memberList.end(); iter1++) {
+						if (iter1->id == iter2->id && iter1->port == iter2->port) {
+								itemExist = true;
+								if (iter1->heartbeat < iter2->heartbeat) {
+										iter1->setheartbeat(iter2->heartbeat);
+										iter1->settimestamp(par->getcurrtime());
+								}
+						}
+				}
+				if (!itemExist) {
+						memberNode->memberList.push_back(*iter2);
+				}
+		}
+}
+
+bool MP1Node::handle_joinrep(char* message, size_t message_size) {
+		memberNode->inGroup = true;
+		updateMemberList(deserialization(message, message_size));
+		return true;
+}
+
+bool MP1Node::handle_ping(char* message, size_t message_size) {
+		updateMemberList(deserialization(message, message_size));
+		return true;
+}
+
 /**
  * FUNCTION NAME: recvCallBack
  *
@@ -219,7 +276,27 @@ bool MP1Node::recvCallBack(void *env, char *data, int size ) {
 		/*
 		 * Your code goes here
 		 */
+		MessageHdr* msg_header = (MessageHdr*) data;
+		MsgTypes msg_type = msg_header->msgType;
 
+		// get net message content
+		char *message = data + sizeof(MessageHdr);
+		size_t message_size = size - sizeof(MessageHdr);
+
+		switch(msg_type) {
+				case JOINREQ:
+						// handle join request by adding the node to the member list
+						return handle_joinreq(message, message_size);
+				case JOINREP:
+						// handle join reply by updating memberlist
+						return handle_joinrep(message, message_size);
+				case PING:
+						// handle received ping by updating the member list
+						return handle_ping(message, message_size);
+				default:
+						// not a valid request
+						return false;
+		}
 }
 
 /**

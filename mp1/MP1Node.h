@@ -56,6 +56,12 @@ private:
 	Params *par;
 	Member *memberNode;
 	char NULLADDR[6];
+  bool handle_joinreq(char *message, size_t message_size);
+  bool handle_joinrep(char *message, size_t message_size);
+  bool handle_ping(char *message, size_t message_size);
+  vector<MemberListEntry> deserialization(
+  				char* message, size_t message_size);
+  void updateMemberList(const vector<MemberListEntry>& list);
 
 public:
 	MP1Node(Member *, Params *, EmulNet *, Log *, Address *);
